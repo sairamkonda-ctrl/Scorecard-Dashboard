@@ -10,8 +10,8 @@
  *  4. Deploy ▸ New deployment ▸ Web app
  *       Execute as: Me   |   Who has access: <your domain>
  *
- * ACCESS: emails in LEAD_EMAILS see everyone; everyone else
- * only ever receives their own rows from the server.
+ * ACCESS: LEAD_EMAILS see everyone. NIGERIA_VIEWER_EMAILS see
+ * Nigeria only. Other Team List members receive their own rows.
  *
  * IDENTITY STITCHING: if a person's rows use a slightly
  * different email in one tab than another, the Name column on
@@ -29,8 +29,9 @@ const CAPACITY_HOURS = 7.5;
 // Nigeria-dedicated report (see the "NIGERIA-DEDICATED REPORT" section near
 // sendNigeriaDigestEmail): must match the "Country" column (Col C) on Team List.
 const NIGERIA_COUNTRY_VALUE = 'Nigeria';
+const NIGERIA_VIEWER_EMAILS = ['yusuf.aderinto@mediamint.com', 'samuel.samuel@mediamint.com'];
 const NIGERIA_REPORT_TO = ['yusuf.aderinto@mediamint.com', 'samuel.samuel@mediamint.com'];
-const NIGERIA_REPORT_CC = ['avinash.vellore@mediamint.com', 'pavan.davuluri@mediamint.com', 'sharath.upadhyay@mediamint.com', 'sairam.konda@mediamint.com'];
+const NIGERIA_REPORT_CC = ['avinash.vellore@mediamint.com', 'pavan.davuluri@mediamint.com', 'sharath.upadhyay@mediamint.com'];
 
 // Display name shown as the email sender (instead of the raw script-owner email).
 const EMAIL_SENDER_NAME = 'EMEA Social Scorecard System';
@@ -76,13 +77,13 @@ function doGet() {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 function getViewerEmail() {
-  try {
-    var e = Session.getActiveUser().getEmail();
-    if (!e) { try { e = Session.getEffectiveUser().getEmail(); } catch (e2) {} }
-    e = normEmail_(e || '');
-    if (!e && LEAD_EMAILS.length) e = normEmail_(LEAD_EMAILS[0]);   // fallback for the lead
-    return e;
-  } catch (e) { return LEAD_EMAILS.length ? normEmail_(LEAD_EMAILS[0]) : ''; }
+  // Never substitute the script owner for an unidentified web-app visitor.
+  try { return normEmail_(Session.getActiveUser().getEmail() || ''); }
+  catch (e) { return ''; }
+}
+function requireLead_() {
+  if (LEAD_EMAILS.map(normEmail_).indexOf(getViewerEmail()) < 0)
+    throw new Error('Only an authorized team lead can send reports or install schedules.');
 }
 
 /* Minimal authorization + delivery test. Run this once from the editor:
@@ -394,10 +395,11 @@ function getData() {
   var teamQueueDaily = Object.keys(tq).map(function(d){ return [d, tq[d][0], tq[d][1], tq[d][2]]; });    // [date, taskCount, trafficking, liveQC]
 
   var viewer = canon(getViewerEmail());
-  var isLead = LEAD_EMAILS.map(function(x){ return normEmail_(x); }).indexOf(viewer) >= 0;
+  var isNigeriaViewer = NIGERIA_VIEWER_EMAILS.indexOf(getViewerEmail()) >= 0;
+  var isLead = !isNigeriaViewer && LEAD_EMAILS.map(function(x){ return normEmail_(x); }).indexOf(viewer) >= 0;
   // Access is restricted to people listed on the Team List tab (Col B = Email).
   var isTeamMember = !!ID.teamEmails[viewer];
-  if (!isLead && !isTeamMember) {
+  if (!isLead && !isNigeriaViewer && !isTeamMember) {
     return {
       noAccess: true, viewer: viewer, isLead: false, canExport: false, unknown: true,
       capacity: CAPACITY_HOURS, weights: KPI_WEIGHTS, teamSize: 0,
@@ -411,12 +413,12 @@ function getData() {
   var canExport = normEmail_(viewer) === normEmail_(EXPORT_LEAD_EMAIL);
 
   var payload = {
-    capacity: CAPACITY_HOURS, viewer: viewer, isLead: isLead, canExport: canExport, ahtBasis: AHT_BASIS,
+    capacity: CAPACITY_HOURS, viewer: viewer, isLead: isLead || isNigeriaViewer, accessCountry: isNigeriaViewer ? NIGERIA_COUNTRY_VALUE : '', canExport: canExport, ahtBasis: AHT_BASIS,
     teamUtilDaily: teamUtilDaily, teamQueueDaily: teamQueueDaily, teamSize: emails.length,
     generated: Utilities.formatDate(new Date(), tz, 'd MMM yyyy, HH:mm') + ' (' + tz + ')'
   };
   payload.weights = KPI_WEIGHTS;
-  if (isLead) {
+  if (isLead || isNigeriaViewer) {
     payload.emails = emails; payload.names = names; payload.countries = countries;
     payload.queue = queue; payload.rej = rej; payload.util = util; payload.ext = ext; payload.score = score;
     payload.chk = chk; payload.pktByIdx = pktByIdx; payload.pktRows = pktRows;
@@ -438,6 +440,13 @@ function getData() {
     payload.compByIdx = vi >= 0 ? [compByIdx[vi]] : [];
     payload.leaveRows = vi >= 0 ? mine(leaveRows) : [];
     payload.unknown = vi < 0;
+  }
+  if (isNigeriaViewer) {
+    var allowed = {};
+    countries.forEach(function(c, i){
+      if (String(c).trim().toLowerCase() === NIGERIA_COUNTRY_VALUE.toLowerCase()) allowed[i] = true;
+    });
+    return filterDataToRegion_(payload, allowed);
   }
   return payload;
 }
@@ -975,6 +984,7 @@ function buildScorecardHTML_(name, timeframe, m, R, win) {
  *   using the first team member's numbers — but the email still goes to the lead.
  * LIVE mode: one email per person, to their own address. */
 function sendScorecardEmail(timeframe, testMode) {
+  requireLead_();
   var data = getData();
   var ss = ss_(); var tz = ss.getSpreadsheetTimeZone() || 'Asia/Kolkata';
   var win = windowFor_(timeframe, tz);
@@ -1105,6 +1115,7 @@ function triggerTeamDigestQuarterly() {
  * time zone (⚙ Project Settings ▸ Time zone in the editor) — set that to
  * Asia/Kolkata first, or these fire at 9:00 in the wrong zone. */
 function installTeamDigestTriggers() {
+  requireLead_();
   ['triggerTeamDigestDaily', 'triggerTeamDigestWeekly', 'triggerTeamDigestMonthly', 'triggerTeamDigestQuarterly'].forEach(function(fn){
     ScriptApp.getProjectTriggers().forEach(function(t){ if (t.getHandlerFunction() === fn) ScriptApp.deleteTrigger(t); });
   });
@@ -1208,33 +1219,31 @@ function teamListEmailsByCountry_(countryValue) {
   });
   return out;
 }
-/* Returns a shallow clone of getData()'s payload scoped to one country: every
- * per-row array (queue/util/ext/rej/chk/paRows/selfdevRows/compRows/pktRows/
- * score) is filtered down to rows whose idx is in that country, and the
- * per-person arrays (pktByIdx/trainByIdx/compByIdx) are masked to null for
- * everyone outside it. emails/names stay full-length so indices still line
- * up — agents outside the region simply end up with zero activity and are
- * skipped automatically by teamAgentRows_() etc. */
+/* Compact the permitted people and remap every row index. Never return
+ * names, emails, ratings, or benchmark totals from another country. */
 function filterDataToRegion_(data, idxSet) {
-  function inSet(i){ return !!idxSet[i]; }
-  function filterRows(arr){ return (arr || []).filter(function(r){ return inSet(r[1]); }); }
-  function maskByIdx(arr){ return (arr || []).map(function(v, i){ return inSet(i) ? v : null; }); }
-  var out = {};
+  var out = {}, indices = [], remap = {};
   for (var k in data) out[k] = data[k];
-  out.queue = filterRows(data.queue);
-  out.rej = filterRows(data.rej);
-  out.util = filterRows(data.util);
-  out.ext = filterRows(data.ext);
-  out.score = filterRows(data.score);
-  out.chk = filterRows(data.chk);
-  out.paRows = filterRows(data.paRows);
-  out.selfdevRows = filterRows(data.selfdevRows);
-  out.compRows = filterRows(data.compRows);
-  out.pktRows = filterRows(data.pktRows);
-  out.leaveRows = filterRows(data.leaveRows);
-  out.pktByIdx = maskByIdx(data.pktByIdx);
-  out.trainByIdx = maskByIdx(data.trainByIdx);
-  out.compByIdx = maskByIdx(data.compByIdx);
+  data.emails.forEach(function(e, i){
+    if (idxSet[i]) { remap[i] = indices.length; indices.push(i); }
+  });
+  ['emails','names','countries','pktByIdx','trainByIdx','compByIdx'].forEach(function(key){
+    out[key] = indices.map(function(i){ return (data[key] || [])[i]; });
+  });
+  ['queue','rej','util','ext','score','chk','paRows','selfdevRows','compRows','pktRows','leaveRows'].forEach(function(key){
+    out[key] = (data[key] || []).filter(function(r){ return idxSet[r[1]]; }).map(function(r){
+      var row = r.slice(); row[1] = remap[r[1]]; return row;
+    });
+  });
+  var prod = {}, tasks = {};
+  out.util.forEach(function(r){ prod[r[0]] = (prod[r[0]] || 0) + r[3]; });
+  out.queue.forEach(function(r){
+    var t = tasks[r[0]] || (tasks[r[0]] = [0,0,0]);
+    t[0] += r[2]+r[3]+r[4]; t[1] += r[3]; t[2] += r[4];
+  });
+  out.teamUtilDaily = Object.keys(prod).map(function(d){ return [d, r4_(prod[d])]; });
+  out.teamQueueDaily = Object.keys(tasks).map(function(d){ return [d].concat(tasks[d]); });
+  out.teamSize = indices.length;
   return out;
 }
 
@@ -1781,6 +1790,7 @@ function buildDigestPdf_(cadence, win, m, cmp, insSug, includeRatings, R, agentR
 
 /* ---------- send ---------- */
 function sendTeamDigestEmail(cadence, testMode) {
+  requireLead_();
   var data = getData();
   var tz = ss_().getSpreadsheetTimeZone() || 'Asia/Kolkata';
   var win = digestWindow_(cadence, tz);
@@ -1856,17 +1866,19 @@ function triggerNigeriaDigestQuarterly() {
  * Same time-zone caveat as installTeamDigestTriggers(): set the Apps Script
  * project time zone (⚙ Project Settings) to Asia/Kolkata first. */
 function installNigeriaDigestTriggers() {
+  requireLead_();
   ['triggerNigeriaDigestDaily', 'triggerNigeriaDigestWeekly', 'triggerNigeriaDigestMonthly', 'triggerNigeriaDigestQuarterly'].forEach(function(fn){
     ScriptApp.getProjectTriggers().forEach(function(t){ if (t.getHandlerFunction() === fn) ScriptApp.deleteTrigger(t); });
   });
-  ScriptApp.newTrigger('triggerNigeriaDigestDaily').timeBased().everyDays(1).atHour(9).nearMinute(15).create();
-  ScriptApp.newTrigger('triggerNigeriaDigestWeekly').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(9).nearMinute(15).create();
-  ScriptApp.newTrigger('triggerNigeriaDigestMonthly').timeBased().everyDays(1).atHour(9).nearMinute(15).create();   // self-guards to the 2nd only
-  ScriptApp.newTrigger('triggerNigeriaDigestQuarterly').timeBased().everyDays(1).atHour(9).nearMinute(15).create(); // self-guards to the 2nd of Jan/Apr/Jul/Oct
+  ScriptApp.newTrigger('triggerNigeriaDigestDaily').timeBased().inTimezone(ss_().getSpreadsheetTimeZone() || 'Asia/Kolkata').everyDays(1).atHour(9).nearMinute(15).create();
+  ScriptApp.newTrigger('triggerNigeriaDigestWeekly').timeBased().inTimezone(ss_().getSpreadsheetTimeZone() || 'Asia/Kolkata').onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(9).nearMinute(15).create();
+  ScriptApp.newTrigger('triggerNigeriaDigestMonthly').timeBased().inTimezone(ss_().getSpreadsheetTimeZone() || 'Asia/Kolkata').everyDays(1).atHour(9).nearMinute(15).create();   // self-guards to the 2nd only
+  ScriptApp.newTrigger('triggerNigeriaDigestQuarterly').timeBased().inTimezone(ss_().getSpreadsheetTimeZone() || 'Asia/Kolkata').everyDays(1).atHour(9).nearMinute(15).create(); // self-guards to the 2nd of Jan/Apr/Jul/Oct
   return 'Installed. Nigeria digest — Daily/Weekly(Mon)/Monthly(2nd)/Quarterly(2nd of Jan·Apr·Jul·Oct) @~9:15am — confirm the project time zone is Asia/Kolkata first.';
 }
 
 function sendNigeriaDigestEmail(cadence, testMode) {
+  requireLead_();
   var fullData = getData();
   var tz = ss_().getSpreadsheetTimeZone() || 'Asia/Kolkata';
   var idxSet = regionIdxSet_(fullData, NIGERIA_COUNTRY_VALUE);

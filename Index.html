@@ -559,7 +559,7 @@ function onData(d){
   const rb=document.getElementById('refreshBtn');if(rb&&!rb._wired){rb._wired=1;rb.addEventListener('click',()=>location.reload());}
   if(IS_LEAD){
     S.member=null;
-    document.getElementById('hsub').textContent='EMEA Social · Team Lead View · Live team & individual performance';
+    document.getElementById('hsub').textContent=DATA.accessCountry ? 'EMEA Social · Nigeria Team View · Live team & individual performance' : 'EMEA Social · Team Lead View · Live team & individual performance';
     document.getElementById('idChip').addEventListener('click',openPicker);
     if(DATA.canExport){const eb=document.getElementById('exportBtn');eb.style.display='inline-flex';eb.addEventListener('click',doExport);}
     const lts=document.getElementById('leadTrendsSec');if(lts)lts.style.display='';
