@@ -200,6 +200,15 @@ function getData() {
   var idx = {}; emails.forEach(function(e, i){ idx[e] = i; });
   var names = emails.map(function(e){ return nameByEmail[e] || e.split('@')[0]; });
 
+  // country per person (Team List, Col C = "Country") — drives the dashboard's country dropdown.
+  // Aligned with emails/names, so countries[i] belongs to the person at index i.
+  var countryByEmail = {};
+  ts.rows.forEach(function(r){
+    var e = canon(col_(ts, r, 'Email')), c = String(col_(ts, r, 'Country', ['Region']) || '').trim();
+    if (e && c && !(e in countryByEmail)) countryByEmail[e] = c;
+  });
+  var countries = emails.map(function(e){ return countryByEmail[e] || ''; });
+
   var queue = [];
   qs.rows.forEach(function(r){
     var e = canon(col_(qs, r, 'Email')); if (!e) return; var d = toISO_(col_(qs, r, 'Date'), tz); if (!d) return;
@@ -393,7 +402,7 @@ function getData() {
       noAccess: true, viewer: viewer, isLead: false, canExport: false, unknown: true,
       capacity: CAPACITY_HOURS, weights: KPI_WEIGHTS, teamSize: 0,
       teamUtilDaily: [], teamQueueDaily: [],
-      emails: [], names: [], queue: [], rej: [], util: [], ext: [], score: [],
+      emails: [], names: [], countries: [], queue: [], rej: [], util: [], ext: [], score: [],
       chk: [], pktByIdx: [], pktRows: [], selfdevRows: [], compRows: [], leaveRows: [],
       generated: Utilities.formatDate(new Date(), tz, 'd MMM yyyy, HH:mm') + ' (' + tz + ')'
     };
@@ -408,7 +417,7 @@ function getData() {
   };
   payload.weights = KPI_WEIGHTS;
   if (isLead) {
-    payload.emails = emails; payload.names = names;
+    payload.emails = emails; payload.names = names; payload.countries = countries;
     payload.queue = queue; payload.rej = rej; payload.util = util; payload.ext = ext; payload.score = score;
     payload.chk = chk; payload.pktByIdx = pktByIdx; payload.pktRows = pktRows;
     payload.selfdevRows = selfdevRows; payload.compRows = compRows; payload.paRows = paRows;
@@ -417,6 +426,7 @@ function getData() {
     var vi = idx.hasOwnProperty(viewer) ? idx[viewer] : -1;
     function mine(a){ return a.filter(function(r){ return r[1] === vi; }).map(function(r){ var c = r.slice(); c[1] = 0; return c; }); }
     payload.emails = vi >= 0 ? [emails[vi]] : []; payload.names = vi >= 0 ? [names[vi]] : [];
+    payload.countries = vi >= 0 ? [countries[vi]] : [];
     payload.queue = vi >= 0 ? mine(queue) : []; payload.rej = vi >= 0 ? mine(rej) : [];
     payload.util = vi >= 0 ? mine(util) : []; payload.ext = vi >= 0 ? mine(ext) : []; payload.score = vi >= 0 ? mine(score) : [];
     payload.chk = vi >= 0 ? mine(chk) : []; payload.pktByIdx = vi >= 0 ? [pktByIdx[vi]] : [];
@@ -474,7 +484,10 @@ function exportScorecardSheet(period) {
   var W = { launch:.15, qa:.15, checklist:.10, pkt:.10, util:.15, pa:.15, training:.10, compliance:.10 };
   var rows = [];
 
+  var wantCountry = (p && p.country) ? String(p.country).trim().toLowerCase() : '';
   data.emails.forEach(function(email, i){
+    // country filter from the dashboard dropdown ('' = all countries)
+    if (wantCountry && String((data.countries && data.countries[i]) || '').trim().toLowerCase() !== wantCountry) return;
     // queue aggregates
     var assigned=0, traf=0, liveQC=0, rej=0, cil=0;
     data.queue.forEach(function(r){ if(r[1]===i && pass(r[0])){ assigned+=r[2]; traf+=r[3]; liveQC+=r[4]; rej+=r[5]; cil+=r[6]; } });
@@ -561,6 +574,7 @@ function exportScorecardSheet(period) {
   rows.sort(function(a,b){ return String(a[1]).localeCompare(String(b[1])); });
 
   var label = periodLabel_(p);
+  if (p && p.country) label += ' · ' + p.country;
   var tz = ss_().getSpreadsheetTimeZone() || 'Asia/Kolkata';
   var stamp = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm');
   var nss = SpreadsheetApp.create('Scorecard Export — ' + label + ' — ' + stamp);
