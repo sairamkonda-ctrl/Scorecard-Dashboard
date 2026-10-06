@@ -344,6 +344,9 @@ svg .ub,svg .dot{cursor:pointer}
       <div class="fgroup"><label>Week</label><div class="ms" id="msWeek"></div></div>
       <div class="fgroup"><label>From</label><input type="date" id="fFrom"></div>
       <div class="fgroup"><label>To</label><input type="date" id="fTo"></div>
+      <div class="fgroup" id="countryGroup" style="display:none"><label>Country</label>
+        <select id="fCountry" aria-label="Filter by country"><option value="">All countries</option></select>
+      </div>
       <div class="fgroup"><label>Agent</label>
         <div class="agent-chip" id="idChip">
           <div class="av" id="idAv">ALL</div>
@@ -500,7 +503,7 @@ let DATA=null, CAP=7.5, IS_LEAD=false;
 const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MONF=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
-const S={member:null,quarters:[],months:[],weeks:[],from:'',to:'',
+const S={member:null,country:'',quarters:[],months:[],weeks:[],from:'',to:'',
   gran:{task:'daily',util:'daily',pa:'daily',checklist:'daily',pkt:'monthly',training:'monthly',compliance:'monthly'}};
 let AGENT_PAGE=1,AGENT_SEARCH='';const AGENT_SIZE=15;
 let INC_PAGE=1,INC_SEARCH='',INC_FILTER='all';const INC_SIZE=10;
@@ -566,7 +569,7 @@ function onData(d){
     document.getElementById('idChip').classList.add('locked');
   }
   updateChip();
-  buildDates();fillFilters();buildIdList('');
+  buildDates();fillFilters();buildCountryFilter();buildIdList('');
   renderActive();
   if(!IS_LEAD&&DATA.unknown){
     document.querySelector('main').innerHTML='<div class="empty" style="padding:90px 20px"><div class="big">No data linked to your account</div>We couldn\'t find rows for '+(DATA.viewer||'your email')+' in the workbook. Check that your email matches the Team List, or ask the team lead.</div>';
@@ -587,8 +590,10 @@ const dLabel=s=>{const d=parseD(s);return ['Sun','Mon','Tue','Wed','Thu','Fri','
 const weekNum=iso=>{const d=parseD(iso);const first=new Date(Date.UTC(d.getUTCFullYear(),0,1));const days=Math.floor((d-first)/86400000);return Math.ceil((days+first.getUTCDay()+1)/7);};
 const initials=n=>n.split(/\s+/).slice(0,2).map(x=>x[0]||'').join('').toUpperCase();
 const num=n=>n.toLocaleString('en-US');
-const inScope=i=>S.member===null||i===S.member;
-const scopeName=()=>S.member===null?'All Agents':DATA.names[S.member];
+/* country filter (Team List → Country). '' = all countries. Applies on top of the agent picker. */
+const inCountry=i=>!S.country||(DATA.countries&&DATA.countries[i])===S.country;
+const inScope=i=>inCountry(i)&&(S.member===null||i===S.member);
+const scopeName=()=>S.member===null?(S.country?'All Agents · '+S.country:'All Agents'):DATA.names[S.member];
 
 /* time-bucket helpers for drill-down granularity */
 const bKey=(iso,g)=>g==='daily'?iso:g==='weekly'?wKey(iso):g==='monthly'?mKey(iso):qKey(iso);
@@ -621,7 +626,7 @@ const compBand=c=>{c=c||0;return c<=0?5:c===1?4:c===2?3:c===3?2:1;};
 function ratingFromByIdx(arr,isComp){
   if(S.member===null){
     let rating=5;
-    if(arr){const v=arr.filter(x=>x!=null);rating=v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):5;}
+    if(arr){const v=arr.filter((x,i)=>x!=null&&inCountry(i));rating=v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):5;}
     const n=(isComp?CMPr():SDr()).length;
     const note=isComp?(n+' compliance entr'+(n===1?'y':'ies')+' across team'):(n+' training record'+(n===1?'':'s')+' across team');
     return {rating,note};
@@ -636,9 +641,9 @@ function ratingFromByIdx(arr,isComp){
   return {rating,note};
 }
 /* team (date only, not member-scoped) */
-const Qd=()=>DATA.queue.filter(r=>passDate(r[0]));
-const UTd=()=>DATA.util.filter(r=>passDate(r[0]));
-const EXd=()=>DATA.ext.filter(r=>passDate(r[0]));
+const Qd=()=>DATA.queue.filter(r=>passDate(r[0])&&inCountry(r[1]));
+const UTd=()=>DATA.util.filter(r=>passDate(r[0])&&inCountry(r[1]));
+const EXd=()=>DATA.ext.filter(r=>passDate(r[0])&&inCountry(r[1]));
 
 function calc(q,ex,ut){
   const traf=q.reduce((a,r)=>a+r[3],0),liveQC=q.reduce((a,r)=>a+r[4],0),assigned=q.reduce((a,r)=>a+r[2],0);
@@ -743,7 +748,7 @@ function paramRatings(){
     note.util=utilPct==null?'no utilization data':utilPct.toFixed(1)+'% util · '+qShort(cur);
     let pkt=null;
     if(S.member!==null)pkt=DATA.pktByIdx?DATA.pktByIdx[S.member]:null;
-    else if(DATA.pktByIdx){const v=DATA.pktByIdx.filter(x=>x!=null);if(v.length)pkt=v.reduce((a,b)=>a+b,0)/v.length;}
+    else if(DATA.pktByIdx){const v=DATA.pktByIdx.filter((x,i)=>x!=null&&inCountry(i));if(v.length)pkt=v.reduce((a,b)=>a+b,0)/v.length;}
     sc.pkt=pkt==null?5:bandFromPct(pkt);
     note.pkt=pkt==null?'no PKT score':pkt.toFixed(1)+'%';
     const rejC=G(rejQ,cur),trafC2=G(trafQ,cur),iqPct=trafC2?(1-rejC/trafC2)*100:null;
@@ -1018,6 +1023,7 @@ function computeRatingsFor(i){
 }
 function renderTopPerformers(){
   const rows=DATA.emails.map((e,i)=>{
+    if(!inCountry(i))return null;
     const q=Qd().filter(r=>r[1]===i),ex=EXd().filter(r=>r[1]===i),ut=UTd().filter(r=>r[1]===i);
     const m=calc(q,ex,ut);
     if(!m.task&&!m.totH)return null;
@@ -1063,7 +1069,7 @@ function renderUtilBreakdown(){
   ].forEach(c=>host.appendChild(c));
   observe(host);
   const overall=utilBreakdownCalc(UTd(),Qd());
-  document.getElementById('utilOverallNote').textContent='Team overall (all agents, current date filter): Overall '+overall.overallPct.toFixed(1)+'% · Productive '+overall.prodPct.toFixed(1)+'% · Non-Productive '+overall.nonPct.toFixed(1)+'% · Productive AHT '+fmtAht(overall.ahtSec);
+  document.getElementById('utilOverallNote').textContent='Team overall ('+(S.country?S.country+' agents':'all agents')+', current date filter): Overall '+overall.overallPct.toFixed(1)+'% · Productive '+overall.prodPct.toFixed(1)+'% · Non-Productive '+overall.nonPct.toFixed(1)+'% · Productive AHT '+fmtAht(overall.ahtSec);
   const rows=DATA.emails.map((e,i)=>{
     const c=utilBreakdownCalc(UT().filter(r=>r[1]===i),Q().filter(r=>r[1]===i));
     return {i,name:DATA.names[i],...c};
@@ -1166,18 +1172,20 @@ function drillUtilOverall(){
 }
 function drillTrendOverall(){
   const rejByCat={},extByCtx={};
-  DATA.rej.forEach(r=>{rejByCat[r[2]||'Other']=(rejByCat[r[2]||'Other']||0)+r[3];});
-  DATA.ext.forEach(r=>{const k=(r[2]||'Other')+' — '+(String(r[5]||'').trim()||'No details logged');extByCtx[k]=(extByCtx[k]||0)+1;});
+  DATA.rej.forEach(r=>{if(!inCountry(r[1]))return;rejByCat[r[2]||'Other']=(rejByCat[r[2]||'Other']||0)+r[3];});
+  DATA.ext.forEach(r=>{if(!inCountry(r[1]))return;const k=(r[2]||'Other')+' — '+(String(r[5]||'').trim()||'No details logged');extByCtx[k]=(extByCtx[k]||0)+1;});
+  const scopeLbl=S.country?S.country+' team':'whole team';
   const top=(m,n)=>Object.keys(m).sort((a,b)=>m[b]-m[a]).slice(0,n);
   const t1=top(rejByCat,5),t2=top(extByCtx,5);
-  const html='<div class="minihead">Top Internal Rejection Categories (all-time, whole team)</div><div class="tbl-wrap"><table><thead><tr><th>Category</th><th style="text-align:right">Count</th></tr></thead><tbody>'+
+  const html='<div class="minihead">Top Internal Rejection Categories (all-time, '+scopeLbl+')</div><div class="tbl-wrap"><table><thead><tr><th>Category</th><th style="text-align:right">Count</th></tr></thead><tbody>'+
     (t1.length?t1.map(c=>'<tr><td>'+esc(c)+'</td><td style="text-align:right">'+rejByCat[c]+'</td></tr>').join(''):'<tr><td colspan="2">No rejections logged.</td></tr>')+'</tbody></table></div>'+
-    '<div class="minihead" style="margin-top:16px">Top External / Critical Context (all-time, whole team)</div><div class="tbl-wrap"><table><thead><tr><th>Type — Context</th><th style="text-align:right">Count</th></tr></thead><tbody>'+
+    '<div class="minihead" style="margin-top:16px">Top External / Critical Context (all-time, '+scopeLbl+')</div><div class="tbl-wrap"><table><thead><tr><th>Type — Context</th><th style="text-align:right">Count</th></tr></thead><tbody>'+
     (t2.length?t2.map(c=>'<tr><td>'+esc(c)+'</td><td style="text-align:right">'+extByCtx[c]+'</td></tr>').join(''):'<tr><td colspan="2">No external/critical items logged.</td></tr>')+'</tbody></table></div>';
   openInfoDrill('Trend Comparisons — Deep Dive','Top categories driving the counts above',html);
 }
 function ltAgentBuckets(from,to){
   return DATA.emails.map((e,i)=>{
+    if(!inCountry(i))return {name:DATA.names[i],rej:0,ext:0,crit:0};
     const rej=DATA.rej.filter(r=>r[1]===i&&r[0]>=from&&r[0]<=to).reduce((a,r)=>a+r[3],0);
     const ext=DATA.ext.filter(r=>r[1]===i&&r[0]>=from&&r[0]<=to&&r[2]==='External').length;
     const crit=DATA.ext.filter(r=>r[1]===i&&r[0]>=from&&r[0]<=to&&r[2]==='Critical').length;
@@ -1317,8 +1325,8 @@ function renderActive(){
 /* lead-only: day/week/month comparisons of internal rejections + external errors (bifurcated External vs Critical) — whole team, unfiltered */
 /* lead-only: Date-wise (14d) / Week-over-Week (8w) / Month-over-Month (6m) tables for
  * Internal Rejections + External Errors (bifurcated External vs Critical) — whole team, unfiltered. */
-function ltCountRej(f,t){let n=0;DATA.rej.forEach(r=>{if(r[0]>=f&&r[0]<=t)n+=r[3];});return n;}
-function ltCountExt(f,t,kind){let n=0;DATA.ext.forEach(r=>{if(r[0]>=f&&r[0]<=t&&r[2]===kind)n++;});return n;}
+function ltCountRej(f,t){let n=0;DATA.rej.forEach(r=>{if(r[0]>=f&&r[0]<=t&&inCountry(r[1]))n+=r[3];});return n;}
+function ltCountExt(f,t,kind){let n=0;DATA.ext.forEach(r=>{if(r[0]>=f&&r[0]<=t&&r[2]===kind&&inCountry(r[1]))n++;});return n;}
 function ltAvg(a){return a.length?a.reduce((s,v)=>s+v,0)/a.length:0;}
 function ltTrendLine(label,arr){
   const half=Math.floor(arr.length/2),a1=ltAvg(arr.slice(0,half)),a2=ltAvg(arr.slice(half));
@@ -1416,13 +1424,27 @@ function fillFilters(){
 document.addEventListener('click',()=>document.querySelectorAll('.ms.open').forEach(m=>m.classList.remove('open')));
 document.getElementById('fFrom').addEventListener('change',e=>{S.from=e.target.value;if(S.to&&S.from>S.to){S.to=S.from;document.getElementById('fTo').value=S.to;}renderActive();});
 document.getElementById('fTo').addEventListener('change',e=>{S.to=e.target.value;if(S.from&&S.to<S.from){S.from=S.to;document.getElementById('fFrom').value=S.from;}renderActive();});
-document.getElementById('reset').addEventListener('click',()=>{S.quarters=[];S.months=[];S.weeks=[];S.from='';S.to='';fillFilters();renderActive();});
+document.getElementById('reset').addEventListener('click',()=>{S.quarters=[];S.months=[];S.weeks=[];S.from='';S.to='';S.country='';const fc=document.getElementById('fCountry');if(fc)fc.value='';fillFilters();buildIdList('');updateChip();renderActive();});
+/* country dropdown (lead view): All / India / Nigeria … — options come straight from the Team List */
+function buildCountryFilter(){
+  const grp=document.getElementById('countryGroup'),sel=document.getElementById('fCountry');
+  if(!grp||!sel||!DATA)return;
+  const list=[...new Set((DATA.countries||[]).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  sel.innerHTML='<option value="">All countries</option>'+list.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
+  sel.value=S.country;
+  grp.style.display=(IS_LEAD&&list.length>1)?'':'none';
+}
+document.getElementById('fCountry').addEventListener('change',e=>{
+  S.country=e.target.value;
+  if(S.member!==null&&!inCountry(S.member))S.member=null; // picked agent is outside this country → back to the whole country
+  buildIdList('');updateChip();renderActive();
+});
 
 /* ===== export to Google Sheet (lead only) ===== */
 function doExport(){
   const eb=document.getElementById('exportBtn'),lbl=document.getElementById('exportLbl');
   eb.disabled=true;const prev=lbl.textContent;lbl.textContent='Building sheet…';
-  const period={quarters:S.quarters,months:S.months,weeks:S.weeks,from:S.from,to:S.to};
+  const period={quarters:S.quarters,months:S.months,weeks:S.weeks,from:S.from,to:S.to,country:S.country};
   // Open the tab synchronously, inside the click gesture, so the browser doesn't block it and it
   // never sits blank — we redirect this same tab once the real URL comes back from the server.
   const tab=window.open('','_blank');
@@ -1444,7 +1466,7 @@ function doExport(){
 /* ===== agent selector ===== */
 function updateChip(){
   const all=S.member===null;
-  if(IS_LEAD){document.getElementById('idNm').textContent=all?'All Agents':DATA.names[S.member];document.getElementById('idAv').textContent=all?'ALL':initials(DATA.names[S.member]);}
+  if(IS_LEAD){document.getElementById('idNm').textContent=all?(S.country?'All · '+S.country:'All Agents'):DATA.names[S.member];document.getElementById('idAv').textContent=all?'ALL':initials(DATA.names[S.member]);}
   else{const nm=DATA.names.length?DATA.names[0]:(DATA.viewer||'You');document.getElementById('idNm').textContent=nm;document.getElementById('idAv').textContent=initials(nm);}
 }
 function setMember(i){S.member=i;updateChip();renderActive();}
@@ -1452,8 +1474,8 @@ const modal=document.getElementById('modal');
 function openPicker(){if(!DATA||!IS_LEAD)return;buildIdList('');modal.classList.add('on');setTimeout(()=>document.getElementById('idSearch').focus(),50);}
 function buildIdList(q=''){
   const list=document.getElementById('idList');if(!IS_LEAD){list.innerHTML='';return;}
-  let html=(!q||'all agents'.indexOf(q)>=0)?'<div class="idrow all '+(S.member===null?'sel':'')+'" data-i="all"><div class="av">ALL</div><div><div class="nm">All Agents</div><div class="em">'+DATA.emails.length+' people</div></div></div>':'';
-  const items=DATA.names.map((n,i)=>({n,e:DATA.emails[i],i})).filter(o=>o.n.toLowerCase().includes(q)||o.e.toLowerCase().includes(q)).sort((a,b)=>a.n.localeCompare(b.n));
+  let html=(!q||'all agents'.indexOf(q)>=0)?'<div class="idrow all '+(S.member===null?'sel':'')+'" data-i="all"><div class="av">ALL</div><div><div class="nm">All Agents'+(S.country?' · '+esc(S.country):'')+'</div><div class="em">'+DATA.emails.filter((e,i)=>inCountry(i)).length+' people</div></div></div>':'';
+  const items=DATA.names.map((n,i)=>({n,e:DATA.emails[i],i})).filter(o=>inCountry(o.i)&&(o.n.toLowerCase().includes(q)||o.e.toLowerCase().includes(q))).sort((a,b)=>a.n.localeCompare(b.n));
   html+=items.map(o=>'<div class="idrow '+(S.member===o.i?'sel':'')+'" data-i="'+o.i+'"><div class="av">'+initials(o.n)+'</div><div><div class="nm">'+esc(o.n)+'</div><div class="em">'+esc(o.e)+'</div></div></div>').join('');
   list.innerHTML=html||'<div class="empty">No match.</div>';
 }
